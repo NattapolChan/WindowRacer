@@ -5,7 +5,7 @@
 #include <assert.h>
 #include "event.hpp"
 #include "helper.hpp"
-#include "phold.hpp"
+#include "debug.hpp"
 
 extern vector<Event> generated_events[num_threads];
 
@@ -128,6 +128,7 @@ bool check_bound(double ts, int tid, bool window_lsb, double creation_ts)
         printf_debug("tid %d, ev_list of %d: %.5g, %ld entries in total\n", tid, id, it->ts, ev_list[id].size());
       }
 
+      printf("straggler\n");
       atomic_min(window_ub[window_lsb], earliest_displaced_event_ts);
 
       latest_change_ts = ts;

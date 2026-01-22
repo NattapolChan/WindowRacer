@@ -3,8 +3,9 @@
 
 #include "entity.hpp"
 #include "event.hpp"
-#include "phold.hpp"
+#include "debug.hpp"
 #include "window_racer_config.hpp"
+#include "trace.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -70,6 +71,7 @@ struct thread_params {
   int num_committed;
   int num_iterations;
   double sim_endtime;
+  std::vector<TraceEvent>* t_events;
 };
 
 uint64_t num_committed_total = 0;
@@ -77,6 +79,8 @@ uint64_t num_committed_total = 0;
 void *run_thread(void *p) {
   thread_params *args = (thread_params *)p;
   int tid = args->tid;
+  std::vector<TraceEvent>* t_events = args->t_events;
+
   uint64_t num_committed_thread_total = 0;
 
   for (uint64_t i = 0; i < num_entities; i++) {
@@ -109,6 +113,8 @@ void *run_thread(void *p) {
     for (auto it = initial_events[src_tid][tid].begin();
          it != initial_events[src_tid][tid].end(); it++) {
       q[tid].push(*it);
+      // for DEBUG
+      printf("Init events: ts: %f cts: %f, dst_id: %d\n", (*it).ts, (*it).creation_ts, (*it).dst_id);
 #ifdef DETAILED_STATS
       stats_max_queue_size[tid] = max(stats_max_queue_size[tid], q[tid].size());
 #endif
@@ -144,6 +150,8 @@ void *run_thread(void *p) {
 
     atomic_min(window_ub[window_lsb], thread_now + tau);
     atomic_min(window_lb[window_lsb], thread_now);
+    // for DEBUG
+    // atomic_min(window_lb[window_lsb], 0.3);
 
     // init of next round
     if (!tid)
@@ -154,9 +162,15 @@ void *run_thread(void *p) {
     printf_debug("tid %d entering barrier B\n", tid);
 
     // SYNC for window_ub
+    TRACE_BEGIN(t_events, "Barrier_sync_ub");
     pthread_barrier_wait(&barrier);
+    if (tid == 0) {
+      printf("start of commit %f iteration:%d\n", window_ub[window_lsb].load(), iter);
+    }
+    TRACE_END(t_events, "Barrier_sync_ub");
 
     if (window_lb[window_lsb] >= args->sim_endtime) {
+      printf("break in 2\n");
       break;
     }
 
@@ -176,7 +190,9 @@ void *run_thread(void *p) {
     printf_debug("tid %d: first event is at %.5g, got %ld in queue\n", tid,
                  q[tid].empty() ? DBL_MAX : q[tid].top().ts, q[tid].size());
 
-    while (true) {
+
+    TRACE_BEGIN(t_events, "ExecutePhase");
+    while (true) { // execute phase
 
       const Event *ev_a = NULL;
 
@@ -206,20 +222,24 @@ void *run_thread(void *p) {
                      tid, q[tid].empty() ? DBL_MAX : q[tid].top().ts,
                      new_ev_q[tid].empty() ? DBL_MAX : new_ev_q[tid].top().ts,
                      (double)window_ub[window_lsb]);
+
+        printf("break in 1\n");
         break;
       }
 
       printf_debug("tid %d: handling event from queue, entity %d, ts %.5g\n",
                    tid, exec_ev.dst_id, exec_ev.ts);
 
-      // assert(id_to_tid(ev.dst_id) == tid);
+      // assert(id_to_tid(exec_ev.dst_id) == tid);
 
       //dirty_entities[tid][id_to_tid(exec_ev.dst_id)].push_back(
       //    &ent[exec_ev.dst_id]);
       printf_debug("tid %d appending %d to dirty_entities[%d][%d]\n", tid,
                    exec_ev.dst_id, tid, tid);
       exec_ev.handle_(tid, window_lsb);
-    }
+    } // end of execute phase
+
+    TRACE_END(t_events, "ExecutePhase");
 
     vector<Event>& new_ev_q_container = get_container(new_ev_q[tid]);
     for (auto& ev: new_ev_q_container) {
@@ -230,7 +250,13 @@ void *run_thread(void *p) {
 
     printf_debug("tid %d entering barrier C\n", tid);
     // SYNC to protect entities and window_ub
+    
+    TRACE_BEGIN(t_events, "BarrierWait");
+
     pthread_barrier_wait(&barrier);
+
+    TRACE_END(t_events, "BarrierWait");
+
     final_window_ub = window_ub[window_lsb];
 
     int num_committed = 0;
@@ -278,6 +304,7 @@ void *run_thread(void *p) {
           }
 
           if (ev.ts < final_window_ub) { // event can be committed
+            printf(" > committed event %f,%d\n", ev.ts, ev.dst_id);
             num_committed++;
             continue;
           }
@@ -348,8 +375,8 @@ void *run_thread(void *p) {
       }
     }
 
-    // printf_debug("tid %d: %d events committed this round\n", tid,
-    // num_committed);
+    printf_debug("tid %d: %d events committed this round\n", tid,
+    num_committed);
     printf_debug("tid %d: %d events committed in iteration %d, tau was %.5g, "
                  "window_ub was %.5g, final_window_ub: %.5g\n",
                  tid, num_committed, iter, (double)window_lb[window_lsb], tau,
@@ -561,10 +588,11 @@ int main(int argc, char **argv) {
   pthread_t thread[num_threads];
 
   thread_params thread_args[num_threads];
-
   pthread_attr_t attr;
   cpu_set_t cpus;
   pthread_attr_init(&attr);
+
+  std::vector<std::vector<TraceEvent>> all_events(num_threads);
 
   if (num_threads > 1) {
     for (uint64_t i = 0; i < num_threads; i++) {
@@ -575,6 +603,8 @@ int main(int argc, char **argv) {
       }
 
       thread_args[i].tid = i;
+      all_events[i].reserve(100);
+      thread_args[i].t_events = &all_events[i];
       thread_args[i].num_committed = 0;
       thread_args[i].num_iterations = 0;
       thread_args[i].sim_endtime = endtime;
@@ -612,6 +642,10 @@ int main(int argc, char **argv) {
          total_ms / 1e3, (double)num_committed_total / total_ms / 1e3);
   printf("%d windows, %.2f events committed per window\n", num_iterations,
          (double)num_committed_total / num_iterations);
+
+  std::string fn = "trace.json";
+  dump_chrome_trace(fn, all_events);
+
 
 #ifdef DETAILED_STATS
   dump_stats();

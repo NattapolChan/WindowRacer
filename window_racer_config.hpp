@@ -1,9 +1,9 @@
 #pragma once
 
-//#define DETAILED_STATS
+#define DETAILED_STATS
 
 // algorithm tuneables
-const double initial_tau = 1e-4;
+const double initial_tau = 1.5; // 0.0001
 const double tau_growth_factor = 100.0;
 const bool mtb_mode = false;
 const bool s3a_mode = false;
@@ -18,12 +18,12 @@ const int random_seed = 1;
 const bool set_affinity = true;
 const int cpu_stride = 1;
 
-const uint64_t num_threads = 4;
+const uint64_t num_threads = 12;
 
-const uint64_t num_entities = 1024 * 1024;
+const uint64_t num_entities = 12;
 
 const int phold_events_per_entity = 1;
 const double phold_lambda = 1;
 const double phold_lookahead = 0;
 const double phold_remote_ratio = 1;
-const double phold_zero_delay_ratio = 0;
+const double phold_zero_delay_ratio = 0.0;
