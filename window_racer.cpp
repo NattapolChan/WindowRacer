@@ -708,6 +708,8 @@ int main(int argc, char **argv) {
         new_ev_q[0].pop();
       }
 
+      printf(" > committed event %f,%d\n", ev.ts, ev.dst_id);
+
       num_committed_total++;
       num_iterations++;
     }
