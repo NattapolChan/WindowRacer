@@ -5,9 +5,18 @@
 #include <assert.h>
 #include "event.hpp"
 #include "helper.hpp"
-#include "debug.hpp"
 
-extern vector<Event> generated_events[num_threads];
+#if defined(EXECUTE_MODEL_TEST_1)
+#include "test_1.hpp"
+#elif defined(EXECUTE_MODEL_TEST_2)
+#include "test_2.hpp"
+#elif defined(EXECUTE_MODEL_PHOLD)
+#include "phold.hpp"
+#else
+#error "TEST MODEL NOT FOUND SHOULD BE ONE OF (TEST_1, TEST_2, PHOLD)"
+#endif
+
+extern vector<vector<Event>> generated_events;
 
 using namespace std;
 
@@ -19,9 +28,9 @@ extern vector<Event> *ev_list;
 extern vector<int> num_saved_states;
 extern Entity *ent;
 extern Entity **prev_ent;
-extern uint64_t stats_num_ent_rollbacks_immediate[num_threads];
-extern uint64_t stats_num_ev_rollbacks_immediate[num_threads];
-extern vector<Entity *> dirty_entities[num_threads][num_threads];
+extern vector<uint64_t> stats_num_ent_rollbacks_immediate;
+extern vector<uint64_t> stats_num_ev_rollbacks_immediate;
+extern vector<vector<vector<Entity *>>> dirty_entities;
 
 class Entity {
 

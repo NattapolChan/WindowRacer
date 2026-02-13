@@ -28,18 +28,22 @@ public:
     double new_ts;
 
     int dst_id = id;
-    if (uniform_dist(gen) < phold_zero_delay_ratio) {
-       if (num_threads == 1)
-         new_ts = now;
-       else
-         // new_ts = now;
-         new_ts = nextafter(now, DBL_MAX);
-    } else {
-       new_ts = now + phold_lookahead + delay_dist(gen);
-    }
+    dst_id = (id + (int)(now / 0.5f)) % num_entities;
+    new_ts = now + 0.0015 + (int)(now / 0.2f) * 0.02 + (dst_id % 5) * 0.025 + (id % 2) * phold_lookahead;
+    if ( (int) ((new_ts - now) * 1000) % 2)
+        dst_id = id;
+    // if (uniform_dist(gen) < phold_zero_delay_ratio) {
+    //    if (num_threads == 1)
+    //      new_ts = now;
+    //    else
+    //      // new_ts = now;
+    //      new_ts = nextafter(now, DBL_MAX);
+    // } else {
+    //    new_ts = now + phold_lookahead + delay_dist(gen);
+    // }
 
-    if (uniform_dist(gen) < phold_remote_ratio)
-      dst_id = (id + dst_dist(gen) + 1) % num_entities;
+    // if (uniform_dist(gen) < phold_remote_ratio)
+    //   dst_id = (id + dst_dist(gen) + 1) % num_entities;
     
     Event::schedule(tid, id, now, new_ts, dst_id);
   }
@@ -50,7 +54,8 @@ public:
 
     for (int i = 0; i < phold_events_per_entity; i++) {
       // for DEBUG
-      double new_ts = phold_lookahead + delay_dist(gen);
+      // double new_ts = phold_lookahead + delay_dist(gen);
+      double new_ts = (double)((id * 498345) % 12394) / 9234. + DBL_MIN;
       printf("scheduling %d %d %f %f %d\n", tid, id , 0.0, new_ts, id);
       Event::schedule(tid, id, 0.0, new_ts, id);
     }

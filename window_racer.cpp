@@ -3,7 +3,18 @@
 
 #include "entity.hpp"
 #include "event.hpp"
-#include "debug.hpp"
+
+// executing model
+#if defined(EXECUTE_MODEL_TEST_1)
+#include "test_1.hpp"
+#elif defined(EXECUTE_MODEL_TEST_2)
+#include "test_2.hpp"
+#elif defined(EXECUTE_MODEL_PHOLD)
+#include "phold.hpp"
+#else
+#error "TEST MODEL NOT FOUND SHOULD BE ONE OF (TEST_1, TEST_2, PHOLD)"
+#endif
+
 #include "window_racer_config.hpp"
 #include "trace.hpp"
 
@@ -22,10 +33,20 @@
 #include <stdio.h>
 #include <thread>
 #include <unistd.h>
-
+#include <cxxopts.hpp>
 #include <assert.h>
 
 using namespace std;
+
+double initial_tau = 1.5;
+double tau_growth_factor = 100.0;
+uint64_t num_threads = 12;
+uint64_t num_entities = 12;
+double phold_lambda = 1.0;
+double phold_lookahead = 0.0;
+double phold_remote_ratio = 1.0;
+double phold_zero_delay_ratio = 0.0;
+double endtime = 0.0;
 
 pthread_barrier_t barrier;
 
@@ -34,19 +55,27 @@ vector<Event> *ev_list;
 pthread_mutex_t *mut;
 vector<int> num_saved_states;
 
-priority_queue<Event, vector<Event>, EventCmp> q[num_threads];
-priority_queue<Event, vector<Event>, EventCmp> new_ev_q[num_threads];
+ // priority_queue<Event, vector<Event>, EventCmp> q[num_threads];
+ // priority_queue<Event, vector<Event>, EventCmp> new_ev_q[num_threads];
+ // 
+ // vector<Entity *> dirty_entities[num_threads][num_threads];
+ // vector<Event> new_ev_list[num_threads][num_threads];
+ // vector<Event> initial_events[num_threads][num_threads];
+ //
+vector<priority_queue<Event, vector<Event>, EventCmp>> q;
+vector<priority_queue<Event, vector<Event>, EventCmp>> new_ev_q;
 
-vector<Entity *> dirty_entities[num_threads][num_threads];
-vector<Event> new_ev_list[num_threads][num_threads];
-vector<Event> initial_events[num_threads][num_threads];
+vector<vector<vector<Entity *>>> dirty_entities;
+vector<vector<vector<Event>>> new_ev_list;
+vector<vector<vector<Event>>> initial_events;
 
 atomic<double> window_lb[2];
 atomic<double> window_ub[2];
 
-vector<Event> generated_events[num_threads];
+vector<vector<Event>> generated_events;
 
 #ifdef DETAILED_STATS
+#error "not tested yet"
 uint64_t stats_num_ent_rollbacks_immediate[num_threads];
 uint64_t stats_num_ev_rollbacks_immediate[num_threads];
 
@@ -170,7 +199,6 @@ void *run_thread(void *p) {
     TRACE_END(t_events, "Barrier_sync_ub");
 
     if (window_lb[window_lsb] >= args->sim_endtime) {
-      printf("break in 2\n");
       break;
     }
 
@@ -223,7 +251,6 @@ void *run_thread(void *p) {
                      new_ev_q[tid].empty() ? DBL_MAX : new_ev_q[tid].top().ts,
                      (double)window_ub[window_lsb]);
 
-        printf("break in 1\n");
         break;
       }
 
@@ -535,18 +562,64 @@ void dump_stats() {
 #endif
 
 int main(int argc, char **argv) {
+
+  cxxopts::Options options("GPU Window Racer Program");
+  options.add_options()
+    ("np,nprocs", "Number of processes", cxxopts::value<uint64_t>())
+    ("ne,nents", "Number of Entities", cxxopts::value<uint64_t>())
+    ("nev,nevents", "Number of Events", cxxopts::value<uint64_t>())
+    ("d,debug", "Enable Debugging mode", cxxopts::value<bool>()->default_value("false"))
+    ("tau,initial_tau", "Initial Tau for window bound", cxxopts::value<double>()->default_value("0.001"))
+    ("taugf,tau_growth_factor", "Growth Factor for Tau", cxxopts::value<double>()->default_value("100"))
+    ("mxs,max_num_states", "Maximum state allowed in state history", cxxopts::value<int>()->default_value("1024"))
+    ("lambda,phold_lambda", "phold lambda", cxxopts::value<double>()->default_value("0.5"))
+    ("remote_ratio,phold_remote_ratio", "phold remote ratio", cxxopts::value<double>()->default_value("0.8"))
+    ("lookahead,phold_lookahead", "phold lookahead", cxxopts::value<double>()->default_value("0.05"))
+    ("zero_delay_ratio,phold_zero_delay_ratio", "phold ratio of event generated instantly", cxxopts::value<double>()->default_value("0."))
+    ("bounds,end_time", "Simulation End Time", cxxopts::value<double>()->default_value("10"))
+    ("h, help", "Print Usage");
+
+  auto result = options.parse(argc, argv);
+  if (result.count("help")) { printf("%s\n", options.help().c_str()); return 0; }
+
+  printf("----------- Window Racer Config -----------\n");
+  printf("%s\n", result.arguments_string().c_str());
+
+  initial_tau = (double)result["initial_tau"].as<double>();
+  tau_growth_factor = (double)result["tau_growth_factor"].as<double>();
+  num_threads = (uint64_t)result["nprocs"].as<uint64_t>();
+  num_entities = (uint64_t)result["nents"].as<uint64_t>();
+  printf("num threads = %d | num entities = %d\n", num_threads, num_entities);
+  // phold_event_per_entity = (uint64_t)result["nprocs"].as<uint64_t>;
+  phold_lambda = (double)result["phold_lambda"].as<double>();
+  phold_lookahead = (double)result["phold_lookahead"].as<double>();
+  phold_remote_ratio = (double)result["phold_remote_ratio"].as<double>();
+  phold_zero_delay_ratio = (double)result["phold_zero_delay_ratio"].as<double>();
+  endtime = (double)result["end_time"].as<double>();
+
   if (num_threads * cpu_stride > std::thread::hardware_concurrency()) {
     std::cout << "more threads (" << num_threads << ") requested than hardware provides ("
               << std::thread::hardware_concurrency() << ")\n";
     return 1;
   }
-  const double endtime = std::stod(argv[1]);
+
+  q.resize(num_threads);
+  new_ev_q.resize(num_threads);
+  dirty_entities.resize(num_threads);
+  new_ev_list.resize(num_threads);
+  initial_events.resize(num_threads);
+  generated_events.resize(num_threads);
+  for (uint64_t i = 0; i < num_threads; i++) {
+      dirty_entities[i].resize(num_threads);
+      new_ev_list[i].resize(num_threads);
+      initial_events[i].resize(num_threads);
+  }
 
   mut = new pthread_mutex_t[num_entities];
   ev_list = new vector<Event>[num_entities];
   for (uint64_t eid = 0; eid < num_entities; eid++)
     ev_list[eid].reserve(20);
-
+  
   ent = new Entity[num_entities];
   prev_ent = new Entity *[num_entities];
 
@@ -585,9 +658,13 @@ int main(int argc, char **argv) {
 
   pthread_barrier_init(&barrier, NULL, num_threads);
 
-  pthread_t thread[num_threads];
+  // pthread_t thread[num_threads];
+  vector<pthread_t> thread;
+  thread.resize(num_threads);
 
-  thread_params thread_args[num_threads];
+  // thread_params thread_args[num_threads];
+  vector<thread_params> thread_args;
+  thread_args.resize(num_threads);
   pthread_attr_t attr;
   cpu_set_t cpus;
   pthread_attr_init(&attr);

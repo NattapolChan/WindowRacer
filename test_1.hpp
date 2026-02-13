@@ -56,6 +56,7 @@ public:
       // for DEBUG
       // double new_ts = phold_lookahead + delay_dist(gen);
       double new_ts = (double)((id * 498345) % 12394) / 9234. + DBL_MIN;
+      printf("scheduling %d %d %f %f %d\n", tid, id , 0.0, new_ts, id);
       Event::schedule(tid, id, 0.0, new_ts, id);
     }
 

@@ -6,14 +6,14 @@
 #include "entity.hpp"
 
 extern Entity *ent;
-extern vector<Entity *> dirty_entities[num_threads][num_threads];
-extern vector<Event> generated_events[num_threads];
-extern uint64_t stats_num_handle_calls[num_threads];
-extern uint64_t stats_num_remote_handle_calls[num_threads];
-extern uint64_t stats_num_instantaneous_events[num_threads];
-extern double stats_mean_event_delay[num_threads];
-extern priority_queue<Event, vector<Event>, EventCmp> new_ev_q[num_threads];
-extern uint64_t stats_max_new_ev_queue_size[num_threads];
+extern vector<vector<vector<Entity *>>> dirty_entities;
+extern vector<vector<Event>> generated_events;
+extern vector<uint64_t> stats_num_handle_calls;
+extern vector<uint64_t> stats_num_remote_handle_calls;
+extern vector<uint64_t> stats_num_instantaneous_events;
+extern vector<double> stats_mean_event_delay;
+extern vector<priority_queue<Event, vector<Event>, EventCmp>> new_ev_q;
+extern vector<uint64_t> stats_max_new_ev_queue_size;
 extern uint64_t num_committed_total;
 
 using namespace std;
@@ -22,18 +22,20 @@ using namespace std;
 
 void Event::schedule(int tid, int src_id, double now, double ts, int dst_id)
 {
+
   assert(dst_id < num_entities);
   Event(ts, dst_id, now);
 
-  printf_debug("tid %d, entity %d: it's %.50f, scheduling a new event at %.50f for entity %d\n", tid, src_id, now, ts, dst_id);
+  // printf_debug("tid %d, entity %d: it's %.50f, scheduling a new event at %.50f for entity %d\n", tid, src_id, now, ts, dst_id);
+  printf("tid %d, entity %d: it's %.50f, scheduling a new event at %.50f for entity %d\n", tid, src_id, now, ts, dst_id);
   
   if (num_threads == 1 && ts == now) {
-    printf_debug("tid %d immediately executing zero-delay event\n");
+    printf_debug("tid %d immediately executing zero-delay event\n", tid);
     ent[dst_id].handle(tid, ts);
     num_committed_total++;
   //} else if (ts == now || now == 0.0) {
   } else if (ts == now || now == 0.0) {
-    printf_debug("tid %d emplacing into generated_events, which has size %ld\n", tid, generated_events[tid].size());
+    printf_debug("tid %d emplacing into generated_events, which has size %ld\n", tid, generated_events.size());
     generated_events[tid].emplace_back(ts, dst_id, now);
     printf_debug("tid %d done emplacing into generated_events\n", tid, generated_events[tid].size());
   } else {
